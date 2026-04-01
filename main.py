@@ -486,20 +486,41 @@ async def mailgun_inbound(request: Request):
         if request.headers.get("X-Webhook-Secret", "") != MAILGUN_WEBHOOK_SECRET:
             raise HTTPException(status_code=403, detail="Bad mailgun secret")
 
-    form = await request.form()
+    recipients = []
+    sender = ""
+    subject = ""
+    body = ""
 
-    recipient_raw = str(form.get("recipient", "") or "")
-    to_raw = str(form.get("To", "") or form.get("to", "") or "")
-    envelope_to_raw = str(form.get("envelope", "") or "")
+    try:
+        data_json = await request.json()
+        payload = data_json.get("data", {}) or {}
 
-    candidates_text = " , ".join([recipient_raw, to_raw, envelope_to_raw]).strip()
-    recipients = extract_emails(candidates_text)
+        to_value = payload.get("to", "")
+        if isinstance(to_value, list):
+            joined = " , ".join(str(x) for x in to_value)
+            recipients = extract_emails(joined)
+        else:
+            recipients = extract_emails(str(to_value))
 
-    sender = str(form.get("sender", "")).strip()
-    subject = str(form.get("subject", "")).strip()
-    body = str(form.get("stripped-text") or form.get("body-plain") or "").strip()
+        sender = str(payload.get("from", "")).strip()
+        subject = str(payload.get("subject", "")).strip()
+        body = str(payload.get("text", "") or payload.get("html", "")).strip()
 
-    print("MAILGUN INBOUND recipients:", recipients, "sender:", sender, "subject:", subject)
+    except Exception:
+        form = await request.form()
+
+        recipient_raw = str(form.get("recipient", "") or "")
+        to_raw = str(form.get("To", "") or form.get("to", "") or "")
+        envelope_to_raw = str(form.get("envelope", "") or "")
+
+        candidates_text = " , ".join([recipient_raw, to_raw, envelope_to_raw]).strip()
+        recipients = extract_emails(candidates_text)
+
+        sender = str(form.get("sender", "")).strip()
+        subject = str(form.get("subject", "")).strip()
+        body = str(form.get("stripped-text") or form.get("body-plain") or "").strip()
+
+    print("MAILGUN/RESEND recipients:", recipients, "sender:", sender, "subject:", subject)
 
     if not recipients:
         return {"ok": True}
@@ -511,7 +532,6 @@ async def mailgun_inbound(request: Request):
             print("No owner for:", to_email)
             continue
 
-        # ✅ (إضافة فقط) إذا صاحب الإيميل محظور لا يتم إرسال الرسائل له
         if owner_id in blocked_users and (not OWNER_ID or owner_id != OWNER_ID):
             print("Blocked owner, skip deliver to:", owner_id, "email:", to_email)
             continue
@@ -521,7 +541,7 @@ async def mailgun_inbound(request: Request):
             await tg_app.bot.send_message(
                 chat_id=owner_id,
                 text=msg,
-                parse_mode=ParseMode.MARKDOWN_V2,  # ✅ صار آمن بعد escape
+                parse_mode=ParseMode.MARKDOWN_V2,
                 disable_web_page_preview=True,
             )
             sent_any = True
