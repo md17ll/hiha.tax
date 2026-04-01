@@ -477,7 +477,7 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-@app.post("/mailgun")
+@app.post("/resend")
 async def mailgun_inbound(request: Request):
     if not tg_app:
         return {"ok": True}
